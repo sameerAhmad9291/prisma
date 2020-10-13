@@ -53,4 +53,4 @@ test('missing-binary', async () => {
           Then run "prisma generate" for your changes to take effect.
           Read more about deploying Prisma Client: https://pris.ly/d/client-generator
         `)
-})
+}, 20000)

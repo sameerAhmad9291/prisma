@@ -1,31 +1,30 @@
+import { DataSource, GeneratorConfig } from '@prisma/generator-helper'
+import { getPlatform, Platform } from '@prisma/get-platform'
+import chalk from 'chalk'
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process'
+import debugLib from 'debug'
+import EventEmitter from 'events'
+import execa from 'execa'
+import fs from 'fs'
+import net from 'net'
+import pRetry from 'p-retry'
+import path from 'path'
+import { promisify } from 'util'
+import byline from './byline'
 import {
+  getErrorMessageWithLink,
+  getMessage,
+  PrismaClientInitializationError,
   PrismaClientKnownRequestError,
+  PrismaClientRustPanicError,
   PrismaClientUnknownRequestError,
   RequestError,
-  PrismaClientInitializationError,
-  PrismaClientRustPanicError,
-  getMessage,
-  getErrorMessageWithLink,
 } from './Engine'
-import debugLib from 'debug'
-import { getPlatform, Platform } from '@prisma/get-platform'
-import path from 'path'
-import net from 'net'
-import fs from 'fs'
-import os from 'os'
-import chalk from 'chalk'
-import { GeneratorConfig, DataSource } from '@prisma/generator-helper'
-import { printGeneratorConfig } from './printGeneratorConfig'
-import { fixBinaryTargets, plusX, getRandomString } from './util'
-import { promisify } from 'util'
-import EventEmitter from 'events'
-import { convertLog, RustLog, RustError } from './log'
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
-import byline from './byline'
-import pRetry from 'p-retry'
-import execa from 'execa'
+import { convertLog, RustError, RustLog } from './log'
 import { omit } from './omit'
+import { printGeneratorConfig } from './printGeneratorConfig'
 import { Undici } from './undici'
+import { fixBinaryTargets, getRandomString, plusX } from './util'
 
 const debug = debugLib('engine')
 const exists = promisify(fs.exists)
@@ -186,14 +185,16 @@ export class NodeEngine {
       'aggregateApi',
       'distinct',
       'aggregations',
-      'insensitiveFilters'
+      'insensitiveFilters',
     ]
     const removedFlagsUsed = this.enableExperimental.filter((e) =>
       removedFlags.includes(e),
     )
     if (removedFlagsUsed.length > 0) {
       console.log(
-        `${chalk.blueBright('info')} The preview flags \`${removedFlagsUsed.join(
+        `${chalk.blueBright(
+          'info',
+        )} The preview flags \`${removedFlagsUsed.join(
           '`, `',
         )}\` were removed, you can now safely remove them from your schema.prisma.`,
       )
@@ -304,65 +305,38 @@ You may have to run ${chalk.greenBright(
       this.currentRequestPromise.cancel()
     }
   }
-
+  // TODO Clean Up Logic
   private async resolvePrismaPath(): Promise<string> {
     if (this.prismaPath) {
       return this.prismaPath
     }
-
     const platform = await this.getPlatform()
     if (this.platform && this.platform !== platform) {
       this.incorrectlyPinnedBinaryTarget = this.platform
     }
 
     this.platform = this.platform || platform
+    const searchLocations: string[] = [
+      this.generator?.output,
+      path.resolve(__dirname),
+      path.resolve(__dirname, `..`),
+      eval(`require('path').join(__dirname, '../../../.prisma/client')`),
+      eval('__dirname'),
+      path.resolve(eval('__dirname'), '..'), // Parent Dir
+      path.dirname(this.datamodelPath), // Datamodel Dir
+      this.cwd,
+      null,
+    ]
 
-    const fileName = eval(`require('path').basename(__filename)`)
-    if (fileName === 'NodeEngine.js') {
-      return this.getQueryEnginePath(
-        this.platform,
-        path.resolve(__dirname, `..`),
-      )
-    } else {
-      const dotPrismaPath = await this.getQueryEnginePath(
-        this.platform,
-        eval(`require('path').join(__dirname, '../../../.prisma/client')`),
-      )
-      debug({ dotPrismaPath })
-      if (fs.existsSync(dotPrismaPath)) {
-        return dotPrismaPath
+    for (let i = 0; i < searchLocations.length; i++) {
+      const location = searchLocations[i]
+      debug(`Search for Query Engine in ${location}`)
+      const prismaPath = await this.getQueryEnginePath(this.platform, location)
+      if (fs.existsSync(prismaPath)) {
+        return prismaPath
       }
-      const dirnamePath = await this.getQueryEnginePath(
-        this.platform,
-        eval('__dirname'),
-      )
-      debug({ dirnamePath })
-      if (fs.existsSync(dirnamePath)) {
-        return dirnamePath
-      }
-      const parentDirName = await this.getQueryEnginePath(
-        this.platform,
-        path.join(eval('__dirname'), '..'),
-      )
-      debug({ parentDirName })
-      if (fs.existsSync(parentDirName)) {
-        return parentDirName
-      }
-      const datamodelDirName = await this.getQueryEnginePath(
-        this.platform,
-        path.dirname(this.datamodelPath),
-      )
-      if (fs.existsSync(datamodelDirName)) {
-        return datamodelDirName
-      }
-      const cwdPath = await this.getQueryEnginePath(this.platform, this.cwd)
-      if (fs.existsSync(cwdPath)) {
-        return cwdPath
-      }
-      const prismaPath = await this.getQueryEnginePath(this.platform)
-      debug({ prismaPath })
-      return prismaPath
     }
+    return this.getQueryEnginePath(this.platform)
   }
 
   // get prisma path
@@ -392,7 +366,6 @@ This probably happens, because you built Prisma Client on a different platform.
 Files in ${dir}:
 
 ${files.map((f) => `  ${f}`).join('\n')}\n`
-
       // The generator should always be there during normal usage
       if (this.generator) {
         // The user already added it, but it still doesn't work 🤷‍♀️
@@ -411,6 +384,7 @@ in the "schema.prisma" file as described in https://pris.ly/d/client-generator,
 but something went wrong. That's suboptimal.
 
 Please create an issue at https://github.com/prisma/prisma-client-js/issues/new`
+          errorText += ``
         } else {
           // If they didn't even have the current running platform in the schema.prisma file, it's easy
           // Just add it
@@ -976,7 +950,6 @@ ${this.lastErrorLog.fields.file}:${this.lastErrorLog.fields.line}:${this.lastErr
       )
     }
 
-
     this.currentRequestPromise = this.undici.request(
       stringifyQuery(query),
       headers,
@@ -1128,9 +1101,8 @@ ${this.lastErrorLog.fields.file}:${this.lastErrorLog.fields.line}:${this.lastErr
       (error.code === 'UND_ERR_SOCKET' &&
         error.message.toLowerCase().includes('closed')) ||
       error.message.toLowerCase().includes('client is destroyed') ||
-      error.message.toLowerCase().includes('other side closed') || (
-        error.code === 'UND_ERR_CLOSED'
-      )
+      error.message.toLowerCase().includes('other side closed') ||
+      error.code === 'UND_ERR_CLOSED'
     ) {
       if (this.globalKillSignalReceived && !this.child.connected) {
         throw new PrismaClientUnknownRequestError(

@@ -49,4 +49,4 @@ test('missing-binary-native', async () => {
 
           Please create an issue at TEST_GITHUB_LINK
         `)
-})
+}, 20000)

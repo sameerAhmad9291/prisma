@@ -310,22 +310,28 @@ You may have to run ${chalk.greenBright(
     if (this.prismaPath) {
       return this.prismaPath
     }
+    
     const platform = await this.getPlatform()
     if (this.platform && this.platform !== platform) {
       this.incorrectlyPinnedBinaryTarget = this.platform
     }
 
     this.platform = this.platform || platform
+
+    const fileName = eval(`require('path').basename(__filename)`)
+    if (fileName === 'NodeEngine.js') {
+      return this.getQueryEnginePath(
+        this.platform,
+        path.resolve(__dirname, `..`),
+      )
+    }
     const searchLocations: string[] = [
-      this.generator?.output,
-      path.resolve(__dirname),
-      path.resolve(__dirname, `..`),
-      eval(`require('path').join(__dirname, '../../../.prisma/client')`),
-      eval('__dirname'),
-      path.resolve(eval('__dirname'), '..'), // Parent Dir
+      eval(`require('path').join(__dirname, '../../../.prisma/client')`), // Dot Prisma Path
+      this.generator?.output, // Custom Generator Path
+      eval('__dirname'), 
+      path.join(eval('__dirname'), '..'), // parentDirName
       path.dirname(this.datamodelPath), // Datamodel Dir
-      this.cwd,
-      null,
+      this.cwd, //cwdPath
     ]
 
     for (let i = 0; i < searchLocations.length; i++) {
